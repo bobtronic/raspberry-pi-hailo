@@ -1,0 +1,41 @@
+nodes:
+  # GStreamer-Hailo bridge with WebRTC streaming
+  - id: gst-bridge
+    path: nodes/gst_bridge_webrtc.py
+    env:
+      CAM_WIDTH: "1280"
+      CAM_HEIGHT: "720"
+      CAM_FPS: "30"
+      ENABLE_DISPLAY: "false"
+      ENABLE_WEBRTC: "true"
+      WEBRTC_PORT: "8080"
+    inputs:
+      tick: dora/timer/millis/33
+      frame_request: rules-engine/frame_request
+      events: rules-engine/events
+    outputs:
+      - detections
+      - frame
+
+  # Track state management - enriches detections with temporal history
+  - id: tracker-state
+    path: nodes/tracker_state.py
+    env:
+      MAX_LOST_FRAMES: "30"
+      VELOCITY_WINDOW: "5"
+    inputs:
+      detections: gst-bridge/detections
+    outputs:
+      - tracks
+
+  # Rules engine - evaluates rules and emits events
+  - id: rules-engine
+    path: nodes/rules_engine.py
+    env:
+      RULES_PATH: "rules/default.yaml"
+    inputs:
+      tracks: tracker-state/tracks
+    outputs:
+      - events
+      - actions
+      - frame_request

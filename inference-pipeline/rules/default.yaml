@@ -1,0 +1,65 @@
+# Default rules for the detection pipeline
+# These rules demonstrate the various trigger types available
+
+rules:
+  # Trigger when a person is detected in the left third of the frame
+  - name: person_in_left_zone
+    trigger:
+      class: person
+      zone: [[0.0, 0.0], [0.33, 0.0], [0.33, 1.0], [0.0, 1.0]]
+      zone_name: left_zone
+      min_duration_sec: 2.0
+    action:
+      type: log
+      message: "Person detected in left zone for {duration_sec:.1f}s (track {track_id})"
+    cooldown_sec: 10.0
+
+  # Trigger when a person is in the center zone
+  - name: person_in_center
+    trigger:
+      class: person
+      zone: [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]
+      zone_name: center_zone
+      min_duration_sec: 1.0
+    action:
+      type: log
+      message: "Person in center zone (track {track_id})"
+    cooldown_sec: 5.0
+
+  # Detect stationary objects (not moving for extended period)
+  - name: stationary_object
+    trigger:
+      stationary_duration_sec: 10.0
+      velocity_threshold: 0.005
+    action:
+      type: log
+      message: "Stationary {class_name} detected for {duration_sec:.1f}s at ({position[0]:.2f}, {position[1]:.2f})"
+    cooldown_sec: 30.0
+
+  # Fast moving objects (high velocity)
+  - name: fast_motion
+    trigger:
+      min_velocity: 0.3
+    action:
+      type: log
+      message: "Fast moving {class_name} detected (speed: {speed:.2f})"
+    cooldown_sec: 3.0
+
+  # Any person tracked for more than 5 seconds
+  - name: persistent_person
+    trigger:
+      class: person
+      min_age_sec: 5.0
+    action:
+      type: log
+      message: "Person tracked for {age_sec:.1f}s (track {track_id})"
+    cooldown_sec: 30.0
+
+  # Car detection anywhere
+  - name: car_detected
+    trigger:
+      class: car
+    action:
+      type: log
+      message: "Car detected (track {track_id}, confidence {confidence:.0%})"
+    cooldown_sec: 10.0
