@@ -77,19 +77,6 @@ class GstBridgeWebRTCNode:
         - events: Events from rules_engine to forward to WebSocket
     """
 
-    # Arrow schema for detections
-    DETECTION_SCHEMA = pa.schema([
-        ('frame_id', pa.uint64()),
-        ('timestamp_ms', pa.float64()),
-        ('track_id', pa.int32()),
-        ('class_id', pa.uint8()),
-        ('class_name', pa.string()),
-        ('confidence', pa.float32()),
-        ('x', pa.float32()),
-        ('y', pa.float32()),
-        ('w', pa.float32()),
-        ('h', pa.float32()),
-    ])
 
     # COCO class mapping
     CLASS_MAP = {
@@ -174,43 +161,26 @@ class GstBridgeWebRTCNode:
             except Exception:
                 pass
 
-    def _build_detection_batch(self, detections, frame_id, timestamp_ms):
-        """Build Arrow RecordBatch from detections."""
-        if not detections:
-            return pa.RecordBatch.from_pydict({
-                'frame_id': pa.array([], type=pa.uint64()),
-                'timestamp_ms': pa.array([], type=pa.float64()),
-                'track_id': pa.array([], type=pa.int32()),
-                'class_id': pa.array([], type=pa.uint8()),
-                'class_name': pa.array([], type=pa.string()),
-                'confidence': pa.array([], type=pa.float32()),
-                'x': pa.array([], type=pa.float32()),
-                'y': pa.array([], type=pa.float32()),
-                'w': pa.array([], type=pa.float32()),
-                'h': pa.array([], type=pa.float32()),
-            }, schema=self.DETECTION_SCHEMA)
-
-        return pa.RecordBatch.from_pydict({
-            'frame_id': pa.array([frame_id] * len(detections), type=pa.uint64()),
-            'timestamp_ms': pa.array([timestamp_ms] * len(detections), type=pa.float64()),
-            'track_id': pa.array([d['track_id'] for d in detections], type=pa.int32()),
-            'class_id': pa.array([self.CLASS_MAP.get(d['label'], 255) for d in detections], type=pa.uint8()),
-            'class_name': pa.array([d['label'] for d in detections], type=pa.string()),
-            'confidence': pa.array([d['confidence'] for d in detections], type=pa.float32()),
-            'x': pa.array([d['bbox']['x'] for d in detections], type=pa.float32()),
-            'y': pa.array([d['bbox']['y'] for d in detections], type=pa.float32()),
-            'w': pa.array([d['bbox']['w'] for d in detections], type=pa.float32()),
-            'h': pa.array([d['bbox']['h'] for d in detections], type=pa.float32()),
-        }, schema=self.DETECTION_SCHEMA)
-
     def _send_detections(self, detections, frame_id, timestamp_ms):
-        """Serialize and send detection batch to dora."""
-        batch = self._build_detection_batch(detections, frame_id, timestamp_ms)
-        sink = pa.BufferOutputStream()
-        writer = pa.ipc.new_stream(sink, self.DETECTION_SCHEMA)
-        writer.write_batch(batch)
-        writer.close()
-        self.node.send_output("detections", sink.getvalue().to_pybytes())
+        """Send detections using zero-copy Arrow StructArray."""
+        # Build list of structs for zero-copy transfer
+        detection_structs = [
+            {
+                'frame_id': frame_id,
+                'timestamp_ms': timestamp_ms,
+                'track_id': d['track_id'],
+                'class_id': self.CLASS_MAP.get(d['label'], 255),
+                'class_name': d['label'],
+                'confidence': d['confidence'],
+                'x': d['bbox']['x'],
+                'y': d['bbox']['y'],
+                'w': d['bbox']['w'],
+                'h': d['bbox']['h'],
+            }
+            for d in detections
+        ]
+        # Send as Arrow StructArray - dora handles zero-copy shared memory
+        self.node.send_output("detections", pa.array(detection_structs))
 
     def _process_queue(self):
         """Process all queued detections and send to dora."""
@@ -458,23 +428,16 @@ class GstBridgeWebRTCNode:
                         self._process_queue()
 
                     elif input_id == "events":
-                        # Receive events from rules_engine
+                        # Receive events from rules_engine - zero-copy Arrow
                         try:
-                            data = event["value"]
-                            if hasattr(data, 'to_pylist'):
-                                data = bytes(data.to_pylist())
-                            elif hasattr(data, 'to_pybytes'):
-                                data = data.to_pybytes()
-                            reader = pa.ipc.open_stream(data)
-                            batch = reader.read_next_batch()
-
-                            # Extract events and add to buffer
-                            for i in range(len(batch)):
+                            # Direct access to Arrow StructArray - no IPC deserialization
+                            events_list = event["value"].to_pylist()
+                            for evt_struct in events_list:
                                 evt = {
-                                    'timestamp': batch['timestamp_ms'][i].as_py(),
-                                    'rule_name': batch['rule_name'][i].as_py(),
-                                    'message': batch['message'][i].as_py(),
-                                    'type': batch['event_type'][i].as_py(),
+                                    'timestamp': evt_struct['timestamp_ms'],
+                                    'rule_name': evt_struct['rule_name'],
+                                    'message': evt_struct['message'],
+                                    'type': evt_struct['event_type'],
                                 }
                                 self._events_buffer.append(evt)
 

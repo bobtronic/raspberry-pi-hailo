@@ -34,19 +34,6 @@ class GstBridgeNode:
         - frame_request: Trigger to capture next frame
     """
 
-    # Arrow schema for detections
-    DETECTION_SCHEMA = pa.schema([
-        ('frame_id', pa.uint64()),
-        ('timestamp_ms', pa.float64()),
-        ('track_id', pa.int32()),
-        ('class_id', pa.uint8()),
-        ('class_name', pa.string()),
-        ('confidence', pa.float32()),
-        ('x', pa.float32()),
-        ('y', pa.float32()),
-        ('w', pa.float32()),
-        ('h', pa.float32()),
-    ])
 
     # Class name to ID mapping (COCO classes)
     CLASS_MAP = {
@@ -90,45 +77,26 @@ class GstBridgeNode:
         except queue.Full:
             pass  # Drop frame if queue is full
 
-    def _build_detection_batch(self, detections, frame_id, timestamp_ms):
-        """Build Arrow RecordBatch from detections."""
-        if not detections:
-            return pa.RecordBatch.from_pydict({
-                'frame_id': pa.array([], type=pa.uint64()),
-                'timestamp_ms': pa.array([], type=pa.float64()),
-                'track_id': pa.array([], type=pa.int32()),
-                'class_id': pa.array([], type=pa.uint8()),
-                'class_name': pa.array([], type=pa.string()),
-                'confidence': pa.array([], type=pa.float32()),
-                'x': pa.array([], type=pa.float32()),
-                'y': pa.array([], type=pa.float32()),
-                'w': pa.array([], type=pa.float32()),
-                'h': pa.array([], type=pa.float32()),
-            }, schema=self.DETECTION_SCHEMA)
-
-        return pa.RecordBatch.from_pydict({
-            'frame_id': pa.array([frame_id] * len(detections), type=pa.uint64()),
-            'timestamp_ms': pa.array([timestamp_ms] * len(detections), type=pa.float64()),
-            'track_id': pa.array([d['track_id'] for d in detections], type=pa.int32()),
-            'class_id': pa.array([self.CLASS_MAP.get(d['label'], 255) for d in detections], type=pa.uint8()),
-            'class_name': pa.array([d['label'] for d in detections], type=pa.string()),
-            'confidence': pa.array([d['confidence'] for d in detections], type=pa.float32()),
-            'x': pa.array([d['bbox']['x'] for d in detections], type=pa.float32()),
-            'y': pa.array([d['bbox']['y'] for d in detections], type=pa.float32()),
-            'w': pa.array([d['bbox']['w'] for d in detections], type=pa.float32()),
-            'h': pa.array([d['bbox']['h'] for d in detections], type=pa.float32()),
-        }, schema=self.DETECTION_SCHEMA)
-
     def _send_detections(self, detections, frame_id, timestamp_ms):
-        """Serialize and send detection batch to dora."""
-        batch = self._build_detection_batch(detections, frame_id, timestamp_ms)
-
-        sink = pa.BufferOutputStream()
-        writer = pa.ipc.new_stream(sink, self.DETECTION_SCHEMA)
-        writer.write_batch(batch)
-        writer.close()
-
-        self.node.send_output("detections", sink.getvalue().to_pybytes())
+        """Send detections using zero-copy Arrow StructArray."""
+        # Build list of structs for zero-copy transfer
+        detection_structs = [
+            {
+                'frame_id': frame_id,
+                'timestamp_ms': timestamp_ms,
+                'track_id': d['track_id'],
+                'class_id': self.CLASS_MAP.get(d['label'], 255),
+                'class_name': d['label'],
+                'confidence': d['confidence'],
+                'x': d['bbox']['x'],
+                'y': d['bbox']['y'],
+                'w': d['bbox']['w'],
+                'h': d['bbox']['h'],
+            }
+            for d in detections
+        ]
+        # Send as Arrow StructArray - dora handles zero-copy shared memory
+        self.node.send_output("detections", pa.array(detection_structs))
 
     def _process_queue(self):
         """Process all queued detections and send to dora."""

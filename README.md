@@ -1,14 +1,21 @@
 # Raspberry Pi Hailo-8 Real-Time Object Detection
 
-Real-time object detection using YOLOv8 on Raspberry Pi 5 with Hailo-8 AI accelerator. Features ultra-low latency WebRTC streaming and synchronized recording playback.
+Real-time object detection using YOLOv8 on Raspberry Pi 5 with Hailo-8 AI accelerator. Features ultra-low latency WebRTC streaming, a dora-rs dataflow pipeline with rules engine, and synchronized recording playback.
 
 ## Quick Start
 
-```bash
-# SSH to the Pi
-ssh <user>@<pi-ip>
+### Option 1: Dora Pipeline (Recommended)
 
-# Start the server
+```bash
+ssh <user>@<pi-ip>
+cd ~/src/raspberry-pi-hailo/inference-pipeline
+dora up && dora start dataflow.yaml
+```
+
+### Option 2: Standalone Server
+
+```bash
+ssh <user>@<pi-ip>
 cd ~/src/raspberry-pi-hailo
 python3 webrtc_server.py
 ```
@@ -18,9 +25,10 @@ Open in browser: **http://\<pi-ip\>:8080**
 ## Features
 
 - **WebRTC Live Stream**: Ultra-low latency (~100-200ms) live video with detection overlays
+- **Dora-rs Dataflow**: Modular pipeline with zero-copy Arrow IPC messaging
+- **Rules Engine**: YAML-configurable event detection (zones, velocity, loitering)
 - **Recording & Playback**: Record sessions with perfectly synchronized detection metadata
 - **Server-Side Tracking**: One Euro Filter smoothing + IoU-based object tracking
-- **VTT Metadata Sync**: Detection data stored as WebVTT cues for frame-accurate playback
 
 ## Hardware
 
@@ -28,7 +36,174 @@ Open in browser: **http://\<pi-ip\>:8080**
 - Hailo-8 AI Hat (26 TOPS)
 - Camera Module
 
-## Architecture
+---
+
+## Dora-rs Pipeline
+
+The `inference-pipeline/` directory contains a modular dataflow architecture using [dora-rs](https://dora-rs.ai/).
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Dora Dataflow Pipeline                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                      gst-bridge (WebRTC)                             │    │
+│  │  ┌─────────────┐                                                     │    │
+│  │  │  GStreamer  │──► Camera 1280x720@30fps                           │    │
+│  │  │   Pipeline  │                                                     │    │
+│  │  └──────┬──────┘                                                     │    │
+│  │         │                                                            │    │
+│  │      ┌──┴──┐                                                         │    │
+│  │      │ tee │────────────────────────────┐                            │    │
+│  │      └──┬──┘                            │                            │    │
+│  │         │                               │                            │    │
+│  │         ▼                               ▼                            │    │
+│  │  ┌─────────────┐                 ┌─────────────┐                     │    │
+│  │  │  INFERENCE  │                 │   WEBRTC    │                     │    │
+│  │  │   BRANCH    │                 │   BRANCH    │                     │    │
+│  │  ├─────────────┤                 ├─────────────┤                     │    │
+│  │  │ hailonet    │                 │ RGB appsink │──► HailoVideoTrack  │    │
+│  │  │ hailofilter │                 │             │        │            │    │
+│  │  │      │      │                 │             │        ▼            │    │
+│  │  │      ▼      │                 │             │    aiortc/aiohttp   │    │
+│  │  │  Detections │                 │             │    :8080 WebRTC     │    │
+│  │  └──────┬──────┘                 └─────────────┘                     │    │
+│  │         │                                                            │    │
+│  └─────────┼────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ Arrow StructArray (zero-copy shared memory)                     │
+│            ▼                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        tracker-state                                 │    │
+│  │  • Maintains track history (last 30 positions per object)           │    │
+│  │  • Computes velocity vectors                                         │    │
+│  │  • Manages track lifecycle (new → active → lost)                    │    │
+│  │  • Enriches detections with temporal metadata                        │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ Arrow StructArray (zero-copy shared memory)                     │
+│            ▼                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────┐    │
+│  │                        rules-engine                                  │    │
+│  │  • Loads rules from YAML configuration                               │    │
+│  │  • Evaluates zone presence (polygon point-in-polygon)               │    │
+│  │  • Detects velocity thresholds                                       │    │
+│  │  • Identifies stationary/loitering objects                          │    │
+│  │  • Emits events back to gst-bridge for WebSocket broadcast          │    │
+│  └─────────────────────────────────────────────────────────────────────┘    │
+│            │                                                                 │
+│            │ events (Arrow StructArray)                                      │
+│            ▼                                                                 │
+│       WebSocket broadcast to browser UI                                      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Dataflow Definition
+
+```yaml
+nodes:
+  - id: gst-bridge
+    path: nodes/gst_bridge_webrtc.py
+    inputs:
+      tick: dora/timer/millis/33      # 30 FPS processing
+      events: rules-engine/events      # Events for WebSocket
+    outputs: [detections]
+
+  - id: tracker-state
+    path: nodes/tracker_state.py
+    inputs:
+      detections: gst-bridge/detections
+    outputs: [tracks]
+
+  - id: rules-engine
+    path: nodes/rules_engine.py
+    inputs:
+      tracks: tracker-state/tracks
+    outputs: [events]
+```
+
+### Zero-Copy IPC
+
+Dora uses Apache Arrow for inter-process communication. Data flows between nodes via shared memory with zero serialization overhead:
+
+```python
+# Sender: Pass Arrow array directly
+node.send_output("detections", pa.array(detection_structs))
+
+# Receiver: Direct access to shared memory
+detections = event["value"].to_pylist()
+```
+
+### Rules Configuration
+
+Rules are defined in `inference-pipeline/rules/default.yaml`:
+
+```yaml
+rules:
+  # Zone presence detection
+  - name: person_in_center
+    trigger:
+      class: person
+      zone: [[0.25, 0.25], [0.75, 0.25], [0.75, 0.75], [0.25, 0.75]]
+      min_duration_sec: 1.0
+    action:
+      type: log
+      message: "Person in center zone (track {track_id})"
+    cooldown_sec: 5.0
+
+  # Velocity-based detection
+  - name: fast_motion
+    trigger:
+      min_velocity: 0.3
+    action:
+      type: log
+      message: "Fast moving {class_name} (speed: {speed:.2f})"
+    cooldown_sec: 3.0
+
+  # Loitering detection
+  - name: stationary_object
+    trigger:
+      stationary_duration_sec: 10.0
+      velocity_threshold: 0.005
+    action:
+      type: log
+      message: "Stationary {class_name} for {duration_sec:.1f}s"
+    cooldown_sec: 30.0
+```
+
+**Available Triggers:**
+| Trigger | Description |
+|---------|-------------|
+| `class` | Filter by object class (person, car, etc.) |
+| `zone` | Polygon coordinates (normalized 0-1) |
+| `min_duration_sec` | Time in zone before triggering |
+| `min_velocity` / `max_velocity` | Speed thresholds |
+| `stationary_duration_sec` | Loitering detection |
+| `min_age_sec` | Track persistence threshold |
+
+### Resource Consumption
+
+| Configuration | CPU | Memory | Notes |
+|---------------|-----|--------|-------|
+| **Standalone** (`webrtc_server.py`) | ~65% | ~370 MB | Single process |
+| **Dora Pipeline** (3 nodes) | ~68% | ~355 MB | Zero-copy Arrow IPC |
+
+Process breakdown (Dora):
+| Node | CPU | Memory | Function |
+|------|-----|--------|----------|
+| gst-bridge | ~65% | 210 MB | GStreamer + Hailo + WebRTC |
+| tracker-state | ~1.5% | 73 MB | Track history & velocity |
+| rules-engine | ~0.8% | 72 MB | Rule evaluation |
+
+**Key optimization:** The initial Dora implementation used manual Arrow IPC serialization (RecordBatch → bytes → deserialize), consuming ~99% CPU and 650 MB. Switching to native zero-copy Arrow arrays reduced overhead to match the standalone version.
+
+---
+
+## Standalone Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -98,9 +273,22 @@ The browser's TextTrack API automatically syncs cues with video playback.
 
 ## Project Files
 
+### Dora Pipeline (`inference-pipeline/`)
+
 | File | Description |
 |------|-------------|
-| `webrtc_server.py` | Main server - WebRTC, HLS, detection tracking |
+| `dataflow.yaml` | Dora dataflow definition |
+| `gst_hailo_pipeline.py` | GStreamer pipeline with Hailo integration |
+| `nodes/gst_bridge_webrtc.py` | Bridge node: GStreamer + WebRTC + Dora |
+| `nodes/tracker_state.py` | Track history and velocity computation |
+| `nodes/rules_engine.py` | YAML-based rule evaluation |
+| `rules/default.yaml` | Default rule definitions |
+
+### Standalone
+
+| File | Description |
+|------|-------------|
+| `webrtc_server.py` | Standalone server - WebRTC, HLS, detection tracking |
 | `hailo_inference_engine.py` | Hailo device management (legacy) |
 | `gstreamer_h264_server.py` | HLS-only server (reference) |
 
@@ -148,11 +336,28 @@ The server applies tracking before sending detections to clients:
 
 ## Dependencies
 
+### Dora Pipeline
+
+```bash
+# Install dora CLI
+curl -sSf https://raw.githubusercontent.com/dora-rs/dora/main/install.sh | bash
+
+# Python packages
+pip install dora-rs pyarrow aiohttp aiortc av numpy pyyaml
+```
+
+### Standalone
+
 ```bash
 pip install aiortc aiohttp av numpy
 ```
 
-System packages: `gstreamer1.0-tools`, `gstreamer1.0-plugins-*`, `hailo-tappas-core`
+### System Packages
+
+```bash
+apt install gstreamer1.0-tools gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good gstreamer1.0-plugins-bad hailo-tappas-core
+```
 
 ## Troubleshooting
 

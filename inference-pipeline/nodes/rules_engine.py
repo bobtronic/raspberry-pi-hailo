@@ -62,16 +62,6 @@ class RulesEngineNode:
         - frame_request: Request frame capture from gst_bridge
     """
 
-    # Event output schema
-    EVENT_SCHEMA = pa.schema([
-        ('timestamp_ms', pa.float64()),
-        ('rule_name', pa.string()),
-        ('track_id', pa.int32()),
-        ('class_name', pa.string()),
-        ('event_type', pa.string()),
-        ('message', pa.string()),
-        ('data', pa.string()),  # JSON-encoded extra data
-    ])
 
     def __init__(self):
         self.node = Node()
@@ -238,23 +228,8 @@ class RulesEngineNode:
             'data': json.dumps(trigger_data)
         }
 
-        # Send event
-        batch = pa.RecordBatch.from_pydict({
-            'timestamp_ms': pa.array([event['timestamp_ms']], type=pa.float64()),
-            'rule_name': pa.array([event['rule_name']], type=pa.string()),
-            'track_id': pa.array([event['track_id']], type=pa.int32()),
-            'class_name': pa.array([event['class_name']], type=pa.string()),
-            'event_type': pa.array([event['event_type']], type=pa.string()),
-            'message': pa.array([event['message']], type=pa.string()),
-            'data': pa.array([event['data']], type=pa.string()),
-        }, schema=self.EVENT_SCHEMA)
-
-        sink = pa.BufferOutputStream()
-        writer = pa.ipc.new_stream(sink, self.EVENT_SCHEMA)
-        writer.write_batch(batch)
-        writer.close()
-
-        self.node.send_output("events", sink.getvalue().to_pybytes())
+        # Send event as zero-copy Arrow StructArray
+        self.node.send_output("events", pa.array([event]))
 
         if action_type == 'log':
             print(f"[RulesEngine] {message}")
@@ -272,27 +247,11 @@ class RulesEngineNode:
         # Update last triggered time
         rule.last_triggered = current_time
 
-    def _evaluate_rules(self, tracks_batch: pa.RecordBatch):
-        """Evaluate all rules against all tracks."""
+    def _evaluate_rules(self, tracks: list):
+        """Evaluate all rules against all tracks (list of dicts from Arrow)."""
         current_time = time.time()
 
-        for i in range(len(tracks_batch)):
-            track = {
-                'track_id': tracks_batch['track_id'][i].as_py(),
-                'class_id': tracks_batch['class_id'][i].as_py(),
-                'class_name': tracks_batch['class_name'][i].as_py(),
-                'confidence': tracks_batch['confidence'][i].as_py(),
-                'x': tracks_batch['x'][i].as_py(),
-                'y': tracks_batch['y'][i].as_py(),
-                'w': tracks_batch['w'][i].as_py(),
-                'h': tracks_batch['h'][i].as_py(),
-                'age_frames': tracks_batch['age_frames'][i].as_py(),
-                'age_ms': tracks_batch['age_ms'][i].as_py(),
-                'velocity_x': tracks_batch['velocity_x'][i].as_py(),
-                'velocity_y': tracks_batch['velocity_y'][i].as_py(),
-                'state': tracks_batch['state'][i].as_py(),
-            }
-
+        for track in tracks:
             for rule in self.rules:
                 # Check cooldown
                 if current_time - rule.last_triggered < rule.cooldown_sec:
@@ -313,17 +272,11 @@ class RulesEngineNode:
                 input_id = event["id"]
 
                 if input_id == "tracks":
-                    # Deserialize Arrow data - dora returns UInt8Array, convert to bytes
-                    data = event["value"]
-                    if hasattr(data, 'to_pylist'):
-                        data = bytes(data.to_pylist())
-                    elif hasattr(data, 'to_pybytes'):
-                        data = data.to_pybytes()
-                    reader = pa.ipc.open_stream(data)
-                    batch = reader.read_next_batch()
+                    # Zero-copy Arrow - direct access to StructArray as list of dicts
+                    tracks = event["value"].to_pylist()
 
                     # Evaluate rules
-                    self._evaluate_rules(batch)
+                    self._evaluate_rules(tracks)
 
             elif event_type == "STOP":
                 print("[RulesEngine] Stopping")
