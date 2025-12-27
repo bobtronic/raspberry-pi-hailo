@@ -1,11 +1,11 @@
-# Dora-rs Inference Pipeline
+# Dora Dataflow
 
 Modular dataflow pipeline using [dora-rs](https://dora-rs.ai/) with YAML-configurable rules engine.
 
 ## Quick Start
 
 ```bash
-cd ~/src/raspberry-pi-hailo/inference-pipeline
+cd ~/src/raspberry-pi-hailo/dora-dataflow
 dora up && dora start dataflow.yaml
 ```
 

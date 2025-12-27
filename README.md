@@ -4,7 +4,7 @@ Real-time object detection using YOLOv8 on Raspberry Pi 5 with Hailo-8 AI accele
 
 ## Implementations
 
-| | [Standalone](standalone/) | [Dora Pipeline](inference-pipeline/) |
+| | [HLS Recorder](hls-recorder/) | [Dora Dataflow](dora-dataflow/) |
 |---|---|---|
 | **Architecture** | Single Python file | Modular dora-rs dataflow |
 | **Best For** | Simple deployment, recording | Event-driven applications |
@@ -22,24 +22,24 @@ CPU percentages are relative to a single core (Pi 5 has 4 cores = 400% max).
 
 | | No Viewer | With WebRTC Viewer |
 |---|---|---|
-| **Standalone** | ~119% CPU, 350 MB | ~191% CPU, 465 MB |
-| **Dora Pipeline** | ~94% CPU, 460 MB | ~173% CPU, 620 MB |
+| **HLS Recorder** | ~119% CPU, 350 MB | ~191% CPU, 465 MB |
+| **Dora Dataflow** | ~94% CPU, 460 MB | ~173% CPU, 620 MB |
 
-Standalone uses more CPU when idle because it continuously encodes HLS to disk.
+HLS Recorder uses more CPU when idle because it continuously encodes HLS to disk.
 
 ## Quick Start
 
-### Option 1: Dora Pipeline
+### Option 1: Dora Dataflow
 
 ```bash
-cd ~/src/raspberry-pi-hailo/inference-pipeline
+cd ~/src/raspberry-pi-hailo/dora-dataflow
 dora up && dora start dataflow.yaml
 ```
 
-### Option 2: Standalone
+### Option 2: HLS Recorder
 
 ```bash
-cd ~/src/raspberry-pi-hailo/standalone
+cd ~/src/raspberry-pi-hailo/hls-recorder
 python3 webrtc_server.py
 ```
 

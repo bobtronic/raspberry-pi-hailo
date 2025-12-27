@@ -1,11 +1,11 @@
-# Standalone WebRTC + HLS Server
+# HLS Recorder
 
 Single-file server for real-time object detection with WebRTC streaming and HLS recording.
 
 ## Quick Start
 
 ```bash
-cd ~/src/raspberry-pi-hailo/standalone
+cd ~/src/raspberry-pi-hailo/hls-recorder
 python3 webrtc_server.py
 ```
 
