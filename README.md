@@ -201,13 +201,13 @@ CPU percentages are relative to a single core (Pi 5 has 4 cores, so 400% = full 
 **Idle (no WebRTC viewer connected):**
 | Configuration | CPU | Memory | Notes |
 |---------------|-----|--------|-------|
-| **Standalone** | ~115% | ~340 MB | Includes HLS recording to disk |
+| **Standalone** | ~119% | ~350 MB | Includes HLS recording to disk |
 | **Dora Pipeline** | ~93% | ~470 MB | Tracker + rules processing |
 
 **Active (WebRTC viewer connected):**
 | Configuration | CPU | Memory | Notes |
 |---------------|-----|--------|-------|
-| **Standalone** | ~105% | ~300 MB | WebRTC encoding active |
+| **Standalone** | ~191% | ~465 MB | +72% for WebRTC encoding |
 | **Dora Pipeline** | ~175% | ~580 MB | WebRTC + full pipeline |
 
 Process breakdown (Dora, idle):
