@@ -102,7 +102,7 @@ pip install dora-rs pyarrow aiohttp aiortc av numpy pyyaml
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Raspberry Pi 5                            │
 ├──────────────────────────────────────────────────────────────────┤
-│                                                                   │
+│                                                                  │
 │   rpicam-vid ──► GStreamer ──┬──► Hailo-8 NPU ──► Detections     │
 │                (I420 720p)   │      (YOLOv8s)         │          │
 │                              │                        │          │
@@ -112,12 +112,12 @@ pip install dora-rs pyarrow aiohttp aiortc av numpy pyyaml
 │                                        ▼              │          │
 │                                   HLS Segments   WebSocket       │
 │                                   + VTT metadata  (JSON)         │
-│                                                                   │
+│                                                                  │
 └──────────────────────────────────────────────────────────────────┘
                                         │
                                         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                          Browser                                  │
+│                          Browser                                 │
 ├──────────────────────────────────────────────────────────────────┤
 │   <video> ◄── WebRTC          Canvas overlay ◄── WebSocket       │
 │           (H.264 stream)                     (detection boxes)   │
