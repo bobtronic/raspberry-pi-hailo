@@ -54,7 +54,15 @@ Open in browser: **http://\<pi-ip\>:8080**
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-See [PIPELINE.md](PIPELINE.md) for detailed pipeline documentation.
+### Design Decisions
+
+**Tee at raw I420:** Split immediately after camera input, before colorspace conversion. Each branch only does conversions it needs - no redundant processing.
+
+**Separate inference branch:** Inference runs at 640x640 (model input size) while video stays at 1280x720. No wasteful upscaling/downscaling.
+
+**WebVTT for detection sync:** Browser's TextTrack API provides automatic sync with video playback. Seeking works correctly with no manual timestamp matching.
+
+**aiortc for WebRTC:** Simpler integration with aiohttp than GStreamer's webrtcbin. Trade-off: Python re-encodes frames (future optimization could use H.264 passthrough).
 
 ## Resource Usage
 
@@ -129,4 +137,3 @@ pip install aiortc aiohttp av numpy
 | File | Description |
 |------|-------------|
 | `webrtc_server.py` | Main server |
-| `PIPELINE.md` | Detailed pipeline architecture docs |
