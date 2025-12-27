@@ -24,11 +24,20 @@ Open in browser: **http://\<pi-ip\>:8080**
 
 ## Features
 
+**Both versions:**
 - **WebRTC Live Stream**: Ultra-low latency (~100-200ms) live video with detection overlays
+- **Server-Side Tracking**: One Euro Filter smoothing + IoU-based object tracking
+- **YOLOv8 on Hailo-8**: 30 FPS inference at 1280x720
+
+**Standalone (`webrtc_server.py`):**
+- **HLS Recording**: Continuous recording to disk with 1-second segments
+- **VTT Metadata**: Detection data synced to video for frame-accurate playback
+- **Recording Playback**: Built-in web UI for browsing and playing recordings
+
+**Dora Pipeline (`inference-pipeline/`):**
 - **Dora-rs Dataflow**: Modular pipeline with zero-copy Arrow IPC messaging
 - **Rules Engine**: YAML-configurable event detection (zones, velocity, loitering)
-- **Recording & Playback**: Record sessions with perfectly synchronized detection metadata
-- **Server-Side Tracking**: One Euro Filter smoothing + IoU-based object tracking
+- **Tracker State**: Enriched detection data with velocity and track history
 
 ## Hardware
 
@@ -187,19 +196,32 @@ rules:
 
 ### Resource Consumption
 
+CPU percentages are relative to a single core (Pi 5 has 4 cores, so 400% = full utilization).
+
+**Idle (no WebRTC viewer connected):**
 | Configuration | CPU | Memory | Notes |
 |---------------|-----|--------|-------|
-| **Standalone** (`webrtc_server.py`) | ~65% | ~370 MB | Single process |
-| **Dora Pipeline** (3 nodes) | ~68% | ~355 MB | Zero-copy Arrow IPC |
+| **Standalone** | ~115% | ~340 MB | Includes HLS recording to disk |
+| **Dora Pipeline** | ~93% | ~470 MB | Tracker + rules processing |
 
-Process breakdown (Dora):
+**Active (WebRTC viewer connected):**
+| Configuration | CPU | Memory | Notes |
+|---------------|-----|--------|-------|
+| **Standalone** | ~105% | ~300 MB | WebRTC encoding active |
+| **Dora Pipeline** | ~175% | ~580 MB | WebRTC + full pipeline |
+
+Process breakdown (Dora, idle):
 | Node | CPU | Memory | Function |
 |------|-----|--------|----------|
-| gst-bridge | ~65% | 210 MB | GStreamer + Hailo + WebRTC |
-| tracker-state | ~1.5% | 73 MB | Track history & velocity |
-| rules-engine | ~0.8% | 72 MB | Rule evaluation |
+| gst-bridge | ~75% | 325 MB | GStreamer + Hailo + WebRTC server |
+| tracker-state | ~4% | 72 MB | Track history & velocity |
+| rules-engine | ~7% | 71 MB | Rule evaluation |
+| rpicam-vid | ~7% | 112 MB | Camera capture |
 
-**Key optimization:** The initial Dora implementation used manual Arrow IPC serialization (RecordBatch → bytes → deserialize), consuming ~99% CPU and 650 MB. Switching to native zero-copy Arrow arrays reduced overhead to match the standalone version.
+**Notes:**
+- WebRTC viewer adds ~80% CPU overhead (video encoding + encryption)
+- Standalone includes HLS recording and playback server; Dora version is WebRTC-only
+- Initial Dora implementation used manual Arrow IPC serialization (~99% CPU, 650 MB). Switching to native zero-copy Arrow arrays significantly reduced overhead.
 
 ---
 
