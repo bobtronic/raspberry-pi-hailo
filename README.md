@@ -202,26 +202,26 @@ CPU percentages are relative to a single core (Pi 5 has 4 cores, so 400% = full 
 | Configuration | CPU | Memory | Notes |
 |---------------|-----|--------|-------|
 | **Standalone** | ~119% | ~350 MB | Includes HLS recording to disk |
-| **Dora Pipeline** | ~93% | ~470 MB | Tracker + rules processing |
+| **Dora Pipeline** | ~94% | ~460 MB | Tracker + rules engine |
 
 **Active (WebRTC viewer connected):**
 | Configuration | CPU | Memory | Notes |
 |---------------|-----|--------|-------|
 | **Standalone** | ~191% | ~465 MB | +72% for WebRTC encoding |
-| **Dora Pipeline** | ~175% | ~580 MB | WebRTC + full pipeline |
+| **Dora Pipeline** | ~173% | ~620 MB | +79% for WebRTC encoding |
 
 Process breakdown (Dora, idle):
 | Node | CPU | Memory | Function |
 |------|-----|--------|----------|
-| gst-bridge | ~75% | 325 MB | GStreamer + Hailo + WebRTC server |
-| tracker-state | ~4% | 72 MB | Track history & velocity |
-| rules-engine | ~7% | 71 MB | Rule evaluation |
+| gst-bridge | ~74% | 208 MB | GStreamer + Hailo + WebRTC server |
+| tracker-state | ~5% | 71 MB | Track history & velocity |
+| rules-engine | ~9% | 71 MB | Rule evaluation |
 | rpicam-vid | ~7% | 112 MB | Camera capture |
 
 **Notes:**
-- WebRTC viewer adds ~80% CPU overhead (video encoding + encryption)
+- WebRTC viewer adds ~72-79% CPU overhead (video encoding + DTLS/SRTP encryption)
 - Standalone includes HLS recording and playback server; Dora version is WebRTC-only
-- Initial Dora implementation used manual Arrow IPC serialization (~99% CPU, 650 MB). Switching to native zero-copy Arrow arrays significantly reduced overhead.
+- Dora idle is lower CPU than standalone because standalone does continuous HLS encoding to disk
 
 ---
 
